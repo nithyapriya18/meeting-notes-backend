@@ -126,10 +126,13 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
 
     console.log('📝 Sending audio to Groq for transcription...');
 
-    // Create FormData for multipart request
     const form = new FormData();
     form.append('file', req.file.buffer, { filename: 'audio.wav' });
     form.append('model', 'whisper-large-v3');
+
+    // Add 5 minute timeout for long audio
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
     const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
@@ -138,7 +141,10 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         ...form.getHeaders(),
       },
       body: form,
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const error = await response.json() as any;
