@@ -121,7 +121,11 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ error: 'No audio file provided' });
     }
 
-    const audioPath = req.file.path;
+    // For memory storage, write file temporarily
+    const tempPath = path.join('/tmp', `${uuidv4()}.wav`);
+    fs.writeFileSync(tempPath, req.file.buffer);
+    
+    const audioPath = tempPath;
     const fileName = path.basename(audioPath);
     
     console.log(`📝 Transcribing: ${audioPath}`);
