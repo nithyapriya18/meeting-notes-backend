@@ -51,12 +51,14 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 
 // Create uploads directory if it doesn't exist
-if (!fs.existsSync('uploads')) {
-  fs.mkdirSync('uploads');
-}
+if (!process.env.VERCEL) {
+  if (!fs.existsSync('uploads')) {
+    fs.mkdirSync('uploads');
+  }
 
-if (!fs.existsSync('exports')) {
-  fs.mkdirSync('exports');
+  if (!fs.existsSync('exports')) {
+    fs.mkdirSync('exports');
+  }
 }
 
 // Configure multer for file uploads
