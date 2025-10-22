@@ -51,6 +51,10 @@ app.use(cors({
 
 app.use(express.json({ limit: '50mb' }));
 
+// Handle OPTIONS requests for CORS preflight
+app.options('*', cors());
+
+
 // Create uploads directory if it doesn't exist
 if (!process.env.VERCEL) {
   if (!fs.existsSync('uploads')) {
