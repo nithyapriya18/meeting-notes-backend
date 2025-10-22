@@ -26,6 +26,7 @@ const port = process.env.PORT || 3001;
 // WHOP INTEGRATION - ENHANCED CORS
 // ============================================
 const allowedOrigins = [
+  'https://meeting-notes-app-azure.vercel.app',
   process.env.FRONTEND_URL,
   'https://whop.com',
   'https://*.whop.com',
@@ -93,7 +94,7 @@ const authenticateUser = async (req: express.Request, res: express.Response, nex
 };
 
 // Apply auth middleware to all API routes (optional)
-app.use('/api/', authenticateUser);
+//app.use('/api/', authenticateUser);
 
 // ============================================
 // HEALTH CHECK
