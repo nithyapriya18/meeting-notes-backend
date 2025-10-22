@@ -62,10 +62,12 @@ if (!process.env.VERCEL) {
 }
 
 // Configure multer for file uploads
+const storage = multer.memoryStorage();
 const upload = multer({ 
-  dest: 'uploads/',
+  storage: storage,
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB
 });
+
 
 // ============================================
 // WHOP AUTHENTICATION MIDDLEWARE
