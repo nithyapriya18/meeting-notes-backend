@@ -120,7 +120,16 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     if (!groqApiKey) {
       return res.status(500).json({ 
         error: 'Groq API key not configured',
-        details: 'GROQ_API_KEY environment variable is missing'
+      });
+    }
+
+    console.log('📝 Audio file size:', req.file.size, 'bytes');
+
+    // Check file size - Groq has ~25MB limit
+    if (req.file.size > 25 * 1024 * 1024) {
+      return res.status(400).json({ 
+        error: 'Audio file too large',
+        details: 'Maximum 25MB. Please upload a shorter audio clip or lower quality file.'
       });
     }
 
@@ -130,7 +139,6 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     form.append('file', req.file.buffer, { filename: 'audio.wav' });
     form.append('model', 'whisper-large-v3');
 
-    // Add 5 minute timeout for long audio
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
