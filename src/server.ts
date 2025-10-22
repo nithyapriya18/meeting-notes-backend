@@ -4,9 +4,9 @@ import dotenv from 'dotenv';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import fetch from 'node-fetch';
+import FormData from 'form-data';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import PDFDocument from 'pdfkit';
 import { createClient } from '@supabase/supabase-js';
@@ -54,9 +54,8 @@ app.use(express.json({ limit: '50mb' }));
 // Handle OPTIONS requests for CORS preflight
 app.options('*', cors());
 
-
-// Create uploads directory if it doesn't exist
-if (!process.env.VERCEL) {
+// Create uploads directory if it doesn't exist (skip on Vercel/Render)
+if (!process.env.VERCEL && !process.env.RENDER) {
   if (!fs.existsSync('uploads')) {
     fs.mkdirSync('uploads');
   }
@@ -66,13 +65,12 @@ if (!process.env.VERCEL) {
   }
 }
 
-// Configure multer for file uploads
+// Configure multer for file uploads - use memory storage
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage: storage,
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB
 });
-
 
 // ============================================
 // WHOP AUTHENTICATION MIDDLEWARE
@@ -82,9 +80,6 @@ const authenticateUser = async (req: express.Request, res: express.Response, nex
     const authHeader = req.headers.authorization;
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      // For now, allow unauthenticated requests (optional: make it required)
-      // Uncomment the next line to require auth
-      // return res.status(401).json({ error: 'No authorization token' });
       next(); // Allow to proceed without auth for now
       return;
     }
@@ -97,8 +92,8 @@ const authenticateUser = async (req: express.Request, res: express.Response, nex
   }
 };
 
-// Apply auth middleware to all API routes (optional)
-//app.use('/api/', authenticateUser);
+// Apply auth middleware to specific routes only (not all /api/ routes)
+// app.use('/api/', authenticateUser);
 
 // ============================================
 // HEALTH CHECK
@@ -113,7 +108,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // ============================================
-// TRANSCRIPTION ENDPOINT
+// TRANSCRIPTION ENDPOINT - GROQ API
 // ============================================
 app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   try {
@@ -121,114 +116,52 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ error: 'No audio file provided' });
     }
 
-    // For memory storage, write file temporarily
-    const tempPath = path.join('/tmp', `${uuidv4()}.wav`);
-    fs.writeFileSync(tempPath, req.file.buffer);
-    
-    const audioPath = tempPath;
-    const fileName = path.basename(audioPath);
-    
-    console.log(`📝 Transcribing: ${audioPath}`);
-
-    // Use Whisper CLI
-    const command = `whisper "${audioPath}" --output_format json --output_dir uploads --model small --fp16 False`;
-
-    try {
-      // Execute whisper command
-      const output = execSync(command, { 
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-
-      console.log('Whisper output:', output);
-
-      // Find the generated JSON file
-      const uploadsDir = 'uploads';
-      const files = fs.readdirSync(uploadsDir);
-      
-      // Look for JSON file with matching name
-      const baseFileName = path.basename(audioPath, path.extname(audioPath));
-      const jsonFile = files.find(f => 
-        f.includes(baseFileName) && f.endsWith('.json')
-      );
-
-      if (!jsonFile) {
-        console.error('Available files:', files);
-        throw new Error('Transcription output file not found');
-      }
-
-      const jsonPath = path.join(uploadsDir, jsonFile);
-      console.log(`Reading JSON from: ${jsonPath}`);
-
-      const result = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-
-      // Format transcript with timestamps
-      let formattedTranscript = '';
-      if (result.segments && Array.isArray(result.segments)) {
-        for (const segment of result.segments) {
-          const timestamp = formatTimestamp(segment.start);
-          const text = segment.text.trim();
-          if (text.length > 0) {
-            formattedTranscript += `[${timestamp}] ${text}\n`;
-          }
-        }
-      } else if (result.text) {
-        formattedTranscript = result.text;
-      } else {
-        formattedTranscript = 'No speech detected';
-      }
-
-      // Cleanup files
-      try {
-        fs.unlinkSync(audioPath);
-        fs.unlinkSync(jsonPath);
-      } catch (e) {
-        console.warn('Cleanup warning:', e);
-      }
-
-      console.log('✅ Transcription successful');
-
-      return res.json({
-        success: true,
-        transcript: formattedTranscript.trim(),
-        text: result.text || formattedTranscript.trim(),
-      });
-
-    } catch (whisperError) {
-      console.error('❌ Whisper error:', whisperError);
-      
-      // Cleanup on error
-      try {
-        if (fs.existsSync(audioPath)) {
-          fs.unlinkSync(audioPath);
-        }
-      } catch (e) {
-        console.warn('Cleanup error:', e);
-      }
-
-      const errorMsg = (whisperError as Error).message;
-      
+    const groqApiKey = process.env.GROQ_API_KEY;
+    if (!groqApiKey) {
       return res.status(500).json({ 
-        error: 'Transcription failed',
-        details: errorMsg,
-        hint: 'Make sure Whisper is installed: pip3 install openai-whisper'
+        error: 'Groq API key not configured',
+        details: 'GROQ_API_KEY environment variable is missing'
       });
     }
-  } catch (error) {
-    console.error('❌ Server error:', error);
-    
-    // Cleanup
-    if (req.file && fs.existsSync(req.file.path)) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (e) {
-        console.warn('Cleanup error:', e);
-      }
+
+    console.log('📝 Sending audio to Groq for transcription...');
+
+    // Create FormData for multipart request
+    const form = new FormData();
+    form.append('file', req.file.buffer, { filename: 'audio.wav' });
+    form.append('model', 'whisper-large-v3');
+
+    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqApiKey}`,
+        ...form.getHeaders(),
+      },
+      body: form,
+    });
+
+    if (!response.ok) {
+      const error = await response.json() as any;
+      console.error('Groq API error:', error);
+      throw new Error(`Groq API error: ${JSON.stringify(error)}`);
     }
 
-    return res.status(500).json({ 
-      error: 'Server error',
-      details: (error as Error).message 
+    const data = await response.json() as any;
+    const transcript = data.text || 'No speech detected';
+
+    console.log('✅ Transcription successful');
+
+    return res.json({
+      success: true,
+      transcript: transcript,
+      text: transcript,
+    });
+
+  } catch (error) {
+    console.error('❌ Transcription error:', error);
+    return res.status(500).json({
+      error: 'Failed to transcribe audio',
+      details: (error as Error).message
     });
   }
 });
@@ -319,7 +252,6 @@ Extract actions and parse all time references into YYYY-MM-DD format:`;
     // Parse JSON from response
     let actions = [];
     try {
-      // Try to extract JSON from the response
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         actions = JSON.parse(jsonMatch[0]);
@@ -688,9 +620,6 @@ app.post('/api/validate-membership', express.json(), async (req, res) => {
       return res.status(400).json({ error: 'memberId required' });
     }
 
-    // TODO: Call Whop API to validate membership
-    // For now, we just return true - you can add actual validation
-
     res.json({
       valid: true,
       memberId: memberId,
@@ -722,14 +651,5 @@ app.listen(port, () => {
   console.log('✅ Ready to transcribe audio files');
   console.log(`🔌 CORS enabled for Whop integration\n`);
 });
-
-// ============================================
-// UTILITY FUNCTIONS
-// ============================================
-function formatTimestamp(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-}
 
 export default app;
